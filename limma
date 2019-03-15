@@ -1,0 +1,23 @@
+library(limma)
+
+data<-read.csv("read-count.csv",header=T,row.names=1)
+sample<-read.csv("info.csv",header=T,row.names=1)
+diagnosis<-factor(c(sample$Diagnosis))
+design<-model.matrix(~0+factor(diagnosis))
+colnames(design)=levels(factor(diagnosis))
+rownames(design)=rownames(sample)
+#voom的功能是将计数数据转化为log2-counts per million(logCPM)
+#v<-voom(data,design) 
+#v<-voom(data,design,normalize="quantile") 
+fit<-lmFit(data,design) #fit<-lmFit(v,design)
+names(fit)
+ # [1] "coefficients"     "stdev.unscaled"   "sigma"           
+ # [4] "df.residual"      "cov.coefficients" "pivot"           
+ # [7] "rank"             "Amean"            "method"          
+# [10] "design"  
+e<-eBayes(fit)
+tempoutput<-topTable(e,coef=1,n=Inf)
+names(tempoutput)
+# [1] "logFC"     "AveExpr"   "t"         "P.Value"   "adj.P.Val" "B" 
+nrDGE<-na.omit(tempoutput)
+table(nrDGE$adj.P.Val<0.05)
