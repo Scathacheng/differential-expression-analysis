@@ -1,0 +1,193 @@
+library(DESeq2)
+library(edgeR)
+library(GenomicAlignments)
+library(airway)
+library(Rsamtools)
+library(GenomicFeatures)
+library(magrittr)
+
+#1 prepare the analysis file
+#1.1 start DESeq2 from SummarizedExperiment
+data("airway")
+se<-airway
+se$dex %<>% relevel("untrt")
+se$dex
+colData(se)
+dds<-DESeqDataSet(se,design=~cell+dex)
+dds
+# class: DESeqDataSet 
+# dim: 64102 8 
+# metadata(2): '' version
+# assays(1): counts
+# rownames(64102): ENSG00000000003 ENSG00000000005 ... LRG_98 LRG_99
+# rowData names(0):
+# colnames(8): SRR1039508 SRR1039509 ... SRR1039520 SRR1039521
+# colData names(9): SampleName cell ... Sample BioSample
+
+
+#1.2 or we can start from count matrices
+countdata<-assay(se)
+head(countdata,3)
+                # SRR1039508 SRR1039509 SRR1039512 SRR1039513 SRR1039516
+# ENSG00000000003        679        448        873        408       1138
+# ENSG00000000005          0          0          0          0          0
+# ENSG00000000419        467        515        621        365        587
+                # SRR1039517 SRR1039520 SRR1039521
+# ENSG00000000003       1047        770        572
+# ENSG00000000005          0          0          0
+# ENSG00000000419        799        417        508
+coldata<-colData(se)
+ddsMat<-DESeqDataSetFromMatrix(countData=countdata,colData=coldata,design=~cell+dex)
+ddsMat
+# class: DESeqDataSet 
+# dim: 64102 8 
+# metadata(1): version
+# assays(1): counts
+# rownames(64102): ENSG00000000003 ENSG00000000005 ... LRG_98 LRG_99
+# rowData names(0):
+# colnames(8): SRR1039508 SRR1039509 ... SRR1039520 SRR1039521
+# colData names(9): SampleName cell ... Sample BioSample
+
+
+#1.3 creating DGEList for use with edgeR
+genetable<-data.frame(gene.id=rownames(se))
+dge<-DGEList(counts=countdata,samples=coldata,genes=genetable)
+
+
+#2 pre-filtering the dataset
+#2.1 filtering
+nrow(dds)
+dds<-dds[rowSums(counts(dds))>1,]
+dge<-dge[rowSums(dge$counts)>1,]
+all(rownames(dge)==rownames(dds))
+
+#2.2 log and variance stabilizing transformations(for example cts a matrix
+lambda<-10^seq(from=-1,to=2,length=1000)
+cts<-matrix(rpois(1000*100,lambda),ncol=100)
+library(vsn)
+library(hexbin)
+meanSdPlot(cts,ranks=FALSE)
+log.cts.one<-log2(cts+1)
+meanSdPlot(log.cts.one,ranks=FALSE)
+#log and vst 2 transform method
+rld<-rlog(dds,blind=FALSE)
+head(assay(dds),3)
+head(assay(rld),3)
+meanSdPlot(assay(dds),ranks=FALSE)
+meanSdPlot(assay(rld),ranks=FALSE)
+vsd<-vst(dds,blind=FALSE)
+head(assay(vsd),3)
+meanSdPlot(assay(vsd),ranks=FALSE)
+
+library(dplyr)
+library(ggplot2)
+dds<-estimateSizeFactors(dds)
+df<-bind_rows(as_data_frame(log2(counts(dds,normalized=TRUE)[,1:2]+1))%>% mutate(transformation="log2(x+1)"),as_data_frame(assay(rld)[,1:2])%>% mutate(transformation="rlog"),as_data_frame(assay(vsd)[,1:2])%>% mutate(transformation="vst"))
+colnames(df)[1:2]<-c("x","y")
+ggplot(df,aes(x=x,y=y))+geom_hex(bins=80)+coord_fixed()+facet_grid(.~transformation)
+
+# 2.2 sample distances: Euclidean distance 
+# sampleDists<-dist(t(assay(rld)))
+# library(pheatmap)
+# library(RColorBrewer)
+# sampleDistMatrix<-as.matrix(sampleDists)
+# rownames(sampleDistMatrix)<-paste(rld$sex,rld$cell,sep="-")
+# colnames(sampleDistMatrix)<-NULL
+# colors<-colorRampPalette(rev(brewer.pal(9,"Blues")))(255)#error for this step
+# pheatmap(sampleDistMatrix,clustering_distance_rows=sampleDists,clustering_distance_cols=sampleDists,col=colors)
+
+#2.3 PCA MDS
+plotPCA(rld,intgroup=c("dex","cell"))
+pcaData<-plotPCA(rld,intgroup=c("dex","cell"),returnData=TRUE)
+
+mds<-as.data.frame(colData(rld)) %>% cbind(cmdscale(sampleDistMatrix))
+#ggplot(mds,aes(x='1',y='2',color=dex,shape=cell))+geom_point(size=3)+coord_fixed()
+#MDSplot x,y is wrong
+mdsPois<-as.data.frame(colData(dds)) %>% cbind(cmdscale(sampleDistMatrix))
+#ggplot(mdsPois,aes(x="1",y="2",color=dex,shape=cell))+geom_point(size=3)+coord_fixed()
+
+
+#3 differential expression analysis
+#3.1 perform differential expression analysis test with DESeq2
+dds<-DESeq(dds)
+res<-results(dds)
+summary(res)
+# out of 29391 with nonzero total read count
+# adjusted p-value < 0.1
+# LFC > 0 (up)       : 2607, 8.9%
+# LFC < 0 (down)     : 2218, 7.5%
+# outliers [1]       : 0, 0%
+# low counts [2]     : 11397, 39%
+# (mean count < 5)
+# [1] see 'cooksCutoff' argument of ?results
+# [2] see 'independentFiltering' argument of ?results
+res<-results(dds,contrast=c("dex","trt","untrt"))#专门比较某个方面的
+mcols(res,use.names=TRUE)
+# DataFrame with 6 rows and 2 columns
+                       # type                               description
+                # <character>                               <character>
+# baseMean       intermediate mean of normalized counts for all samples
+# log2FoldChange      results  log2 fold change (MLE): dex trt vs untrt
+# lfcSE               results          standard error: dex trt vs untrt
+# stat                results          Wald statistic: dex trt vs untrt
+# pvalue              results       Wald test p-value: dex trt vs untrt
+# padj                results                      BH adjusted p-values
+res.05<-results(dds,alpha=0.05)
+table(res.05$padj<0.05)
+# FALSE  TRUE 
+# 12829  4026 
+resLFC1<-results(dds,lfcThreshold=1)
+table(resLFC1$padj<0.1)
+# FALSE  TRUE 
+# 20034   240 
+rescell<-results(dds,contrast=c("cell","N061011","N61311"))
+rescell
+
+#3.2 perform differential expression analysis test with edgeR
+design<-model.matrix(~cell+dex,dge$samples)
+dge<-calcNormFactors(dge)
+dge<-estimateDisp(dge,design)
+fit<-glmFit(dge,design)
+lrt<-glmLRT(fit,coef=ncol(design))
+tt<-topTags(lrt,n=nrow(dge),p.value=0.1)
+tt10<-topTags(lrt) #defult top 10 results
+
+#3.3 compare 2 software overlap
+tt.all<-topTags(lrt,n=nrow(dge),sort.by="none")
+table(DESeq2=res$padj<0.1,edgeR=tt.all$table$FDR<0.1)
+       # edgeR
+# DESeq2  FALSE  TRUE
+  # FALSE 11826  1343
+  # TRUE    148  4677
+#compare 2 list by ranks
+common<-!is.na(res$padj)
+plot(rank(res$padj[common]),rank(tt.all$table$FDR[common]),cex=.1,xlab="DESeq2",ylab="edgeR")
+
+#3.4 multiple test
+#PAY ATTENTION TO padj(for benjamini-Hochberg adjustment
+resSig<-subset(res,padj<0.1)
+head(resSig[order(resSig$log2FoldChange),])
+head(resSig[order(resSig$log2FoldChange,decreasing=TRUE),])
+
+
+
+#4 plot results
+#4.1 counts plot
+topGene<-rownames(res)[which.min(res$padj)] #topGene only 1
+plotCounts(dds,gene=topGene,intgroup=c("dex"))
+#4.2 MA plot
+res<-lfcShrink(dds,contrast=c("dex","trt","untrt"),res=res) #shrink log2 fc for comparison
+DESeq2::plotMA(res,ylim=c(-5,5))
+res.noshr<-results(dds) #or if don't shrink
+DESeq2::plotMA(res.noshr,ylim=c(-5,5))
+
+DESeq2::plotMA(res,ylim=c(-5,5))
+topGene<-rownames(res)[which.min(res$padj)]
+with(res[topGene,],{
+points(baseMean,log2FoldChange,col="dodgerblue",cex=2,lwd=2)
+text(baseMean,log2FoldChange,topGene,pos=2,col="dodgerblue")
+})
+#奇了怪了一定要分开写？
+hist(res$pvalue[res$baseMean>1],breaks=0:20/20,col="grey60",border="white")
+#MA/Smear plot with edgeR
+plotSmear(lrt,de.tags=tt$table$gene.id)
