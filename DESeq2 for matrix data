@@ -1,0 +1,32 @@
+data<-read.csv("read-count.csv",header=T,row.names=1)
+                 # R1  R2  R3  R4  R5
+# ENSG00000000003   0   0   0   1   0
+# ENSG00000000005   0   0   0   0   0
+# ENSG00000000419 226 286 290 219 235
+# ENSG00000000457  86  58 111  26 171
+# ENSG00000000460  36  27  26  29  30
+#data可以是矩阵，但是必须是integer的数据类型，并且是没有normalize过的count数据
+sample<-read.csv("info.csv",header=T,row.names=1)
+#sample可以不用都转换成数字（factor格式的也可以
+dds<-DESeqDataSetFromMatrix(countData=data,colData=sample,design=~Diagnosis)
+#design就是要考察的变量
+dds<-DESeq(dds)
+res<-results(dds)
+head(res)
+table(res$padj<0.1)
+summary(res)
+#alpha可以在不同阈值进行测试，
+res2<-results(dds,alpha=0.05)
+table(res2$padj<0.05)
+#可视化
+plotMA(res)
+#针对不同的零假设进行检验，比如这里计算logfc的值大于1的情况
+res.thr<-results(dds2,lfcThreshold=1)
+plotMA(res.thr)
+#P值的histogram
+hist(res$pvalue[res$baseMean>1],col="grey",border="white",xlab="",ylab="",main="")
+#
+resSort<-res[order(res$padj),]
+head(resSort)
+plotCounts(dds2,gene=which.min(res$padj),intgroup="Diagnosis"#,returnData=TRUE#)
+#画不出图就返回数据
